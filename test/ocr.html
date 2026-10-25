@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>OCR 테스트</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script src="../src/ocr.js"></script>
+<script src="../src/latex-image.js"></script>
+<style>
+  body { font: 13px/1.4 -apple-system, sans-serif; margin: 16px; background: #fff; color: #111; }
+  td { border-bottom: 1px solid #ddd; padding: 4px 8px; vertical-align: middle; }
+  .ok { color: #1e7a3c; } .bad { color: #b3261e; }
+  canvas { max-height: 60px; }
+</style>
+</head>
+<body>
+<p id="summary">실행 중…</p>
+<table id="t"></table>
+<script>
+// 렌더링 결과를 다시 KaTeX 로 렌더링해 같은 그림인지(HTML 비교) 판단한다
+const CASES = [
+  'x^2 + 2x + 1', 'a + b = c', 'E = mc^2', '\\frac{1}{2}', '\\frac{a+b}{c-d}', 'x_1 + x_2',
+  '\\sqrt{x+1}', '\\sqrt[3]{8} = 2', 'x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}', '\\sum_{i=1}^{n} i^2',
+  '\\int_0^1 x^2 dx', '\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1', 'e^{i\\pi} + 1 = 0', '\\alpha + \\beta \\le \\gamma',
+  'f(x) = 3x^2 - 5', String.raw`\frac{1}{1+\frac{1}{x}}`, String.raw`x_{i+1} = x_i - \frac{f(x_i)}{f'(x_i)}`, String.raw`\sqrt{\frac{a}{b}}`,
+  String.raw`\prod_{k=1}^{n} k = n!`, String.raw`\cos(\alpha + \beta)`, '|x| < 1', String.raw`\int_{-\infty}^{\infty} e^{-x^2} dx = \sqrt{\pi}`,
+  String.raw`y = \frac{3}{4}x - 7`, String.raw`\Delta x \neq 0`, String.raw`0.5 \cdot 4 = 2`, String.raw`\overline{AB}`, 'a_n = a_1 + (n-1)d',
+  '\\sin^2\\theta + \\cos^2\\theta = 1', 'a^2 + b^2 = c^2', '\\frac{dy}{dx} = 2x',
+  '\\log_2 8 = 3', 'y = mx + b', '\\pi r^2', '(a+b)^2', 'x^{n+1}', '2 \\times 3 = 6', 'n! \\ge 1',
+];
+const canon = (s) => {
+  s = s.replace(/([_^])\{([A-Za-z0-9]|\\[A-Za-z]+)\}/g, '$1$2');
+  try { return katex.renderToString(s, { throwOnError: true, output: 'html' }); } catch { return 'ERR:' + s; }
+};
+const SIZES = (new URLSearchParams(location.search).get('sizes') || '32').split(',').map(Number);
+
+(async () => {
+  const tbody = document.getElementById('t');
+  let pass = 0;
+  window.results = [];
+  for (const size of SIZES) for (const tex of CASES) {
+    let cv, r;
+    const t0 = performance.now();
+    try {
+      cv = await LatexImage.render(tex, { fontSize: size });
+      r = await FormulaOCR.recognize(cv);
+    } catch (e) {
+      cv = document.createElement('canvas');
+      r = { latex: '오류: ' + (e && (e.message || e.name)) };
+    }
+    const ms = Math.round(performance.now() - t0);
+    const ok = canon(r.latex) === canon(tex);
+    if (ok) pass++;
+    window.results.push({ tex, size, got: r.latex, ok });
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td></td><td><code></code></td><td><code></code></td><td class="${ok ? 'ok' : 'bad'}">${ok ? '✓' : '✗'} ${ms}ms</td>`;
+    tr.children[0].append(cv);
+    tr.children[1].firstChild.textContent = tex;
+    tr.children[2].firstChild.textContent = r.latex;
+    tbody.append(tr);
+  }
+  document.getElementById('summary').textContent = `${pass} / ${window.results.length} 정확히 일치`;
+  window.done = true;
+})().catch((e) => { document.getElementById('summary').textContent = '오류: ' + e.stack; window.done = true; });
+</script>
+</body>
+</html>

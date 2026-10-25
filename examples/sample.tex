@@ -1,0 +1,40 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb,bm,siunitx}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\newcommand{\pd}[3][]{\frac{\partial^{#1} #2}{\partial #3^{#1}}}
+\DeclareMathOperator{\Tr}{Tr}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\def\vec#1{\bm{#1}}
+
+\begin{document}
+\section{예제}
+벡터 $\vec{x} \in \R^n$ 의 노름은 \(\norm{\vec{x}}\) 이다. % 주석은 제거됨
+가격은 \$5 이고, 속도는 $\SI{3.0}{\meter\per\second}$ 이다.
+
+\begin{equation}
+  \Tr(A) = \sum_{i} a_{ii} \label{eq:trace}
+\end{equation}
+
+식 \eqref{eq:trace} 에서
+\begin{align}
+  f(x) &= \pd{u}{x} + \pd[2]{u}{t} \label{eq:a} \\
+  \hat\theta &= \argmax_{\theta} \mbox{ } L(\theta) \nonumber
+\end{align}
+
+\begin{eqnarray*}
+  a &=& b + c \\
+    &\le& \mathbbm{1} \cdot \sqrt{2}
+\end{eqnarray*}
+
+\begin{multline}
+  x = a + b + c \\
+  + d + e \tag{M}
+\end{multline}
+
+\[ \begin{split} y &= \ensuremath{\upalpha} x \\ &= \sfrac{1}{2} \end{split} \]
+
+\verb|$not math$| 그리고 \begin{verbatim}
+$ also not math $
+\end{verbatim}
+\end{document}

@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LaTeX → KaTeX 변환기</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/mhchem.min.js"></script>
+<script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+<script defer src="src/latex2katex.js"></script>
+<script defer src="src/text2latex.js"></script>
+<script defer src="src/ocr.js"></script>
+<script defer src="src/latex-image.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1f; --muted: #6b6b70; --border: #dcdcd8;
+    --accent: #2f6fed; --warn-bg: #fff6e0; --warn: #8a5a00; --err-bg: #fdeceb; --err: #b3261e; --ok: #1e7a3c;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161618; --panel: #1f1f22; --text: #ececee; --muted: #9a9aa2; --border: #34343a;
+      --accent: #6d9bff; --warn-bg: #3a2f14; --warn: #f0c46b; --err-bg: #3d1d1b; --err: #ff8a80; --ok: #6fd391;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Segoe UI", sans-serif; }
+  header { padding: 20px 24px 8px; }
+  h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  .options { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 10px 24px; align-items: center; font-size: 13px; }
+  .options label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+  .options select { font: inherit; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px; }
+  main { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 8px 24px 24px; }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; min-width: 0; }
+  .head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600; gap: 8px; }
+  .head .btns { display: flex; gap: 6px; }
+  button, .file { font: inherit; font-weight: 500; font-size: 12px; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .file input { display: none; }
+  textarea { flex: 1; min-height: 340px; border: 0; resize: vertical; padding: 12px; background: transparent; color: var(--text);
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; }
+  .preview { grid-column: 1 / -1; }
+  #preview { padding: 16px; white-space: pre-wrap; overflow-x: auto; min-height: 120px; }
+  #preview .katex-display { overflow-x: auto; overflow-y: hidden; }
+  #messages { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .msg { padding: 8px 12px; border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
+  .msg.warn { background: var(--warn-bg); color: var(--warn); }
+  .msg.err { background: var(--err-bg); color: var(--err); }
+  .msg.ok { color: var(--ok); padding: 0 2px; }
+  nav.tabs { display: flex; gap: 4px; padding: 10px 24px 0; border-bottom: 1px solid var(--border); overflow-x: auto; }
+  nav.tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; font-size: 14px; padding: 8px 12px; color: var(--muted); white-space: nowrap; }
+  nav.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  .tab[hidden] { display: none; }
+  .pane { padding: 16px 24px 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .pane > .full { grid-column: 1 / -1; }
+  .drop { border: 2px dashed var(--border); border-radius: 10px; min-height: 220px; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 10px; padding: 16px; text-align: center; color: var(--muted); font-size: 13px; position: relative; }
+  .drop.over { border-color: var(--accent); color: var(--text); }
+  .drop canvas { max-width: 100%; height: auto; border-radius: 6px; }
+  .drop .btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+  .result-box { display: flex; flex-direction: column; gap: 10px; }
+  .result-box textarea { min-height: 90px; flex: none; border: 1px solid var(--border); border-radius: 8px; }
+  .rendered { min-height: 70px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; display: flex; align-items: center; justify-content: center; }
+  .rendered .katex { font-size: 1.4em; }
+  .status { font-size: 13px; color: var(--muted); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips button { font-size: 12px; }
+  .hint { font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .hint code { font-size: 12px; }
+  #say-input { min-height: 90px; flex: none; border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 15px; }
+  @media (max-width: 760px) {
+    nav.tabs { padding: 8px 16px 0; }
+    .pane { grid-template-columns: 1fr; padding: 12px 16px 16px; }
+    header, .options { padding-left: 16px; padding-right: 16px; }
+    main { grid-template-columns: 1fr; padding: 8px 16px 16px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>LaTeX → KaTeX 변환기</h1>
+  <p>LaTeX 문서나 수식을 붙여넣으면 KaTeX에서 바로 렌더링되는 형태로 바꿔 줍니다. 모든 처리는 브라우저 안에서 이루어집니다.</p>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-tab="convert" aria-selected="true">LaTeX 변환</button>
+  <button role="tab" data-tab="image" aria-selected="false">이미지 → LaTeX</button>
+  <button role="tab" data-tab="say" aria-selected="false">말로 → LaTeX</button>
+</nav>
+
+<div class="tab" id="tab-image" hidden>
+  <div class="pane">
+    <div class="drop" id="drop">
+      <div id="drop-msg">수식 이미지를 끌어다 놓거나, 붙여넣기(⌘V / Ctrl+V) 하거나, 파일을 고르세요.</div>
+      <canvas id="ocr-canvas" hidden></canvas>
+      <div class="btns">
+        <label class="file">이미지 열기<input type="file" id="ocr-file" accept="image/*"></label>
+        <button id="ocr-sample">예제 이미지 만들기</button>
+      </div>
+    </div>
+    <div class="result-box">
+      <div class="status" id="ocr-status">이미지를 넣으면 인식 결과가 여기에 나옵니다.</div>
+      <textarea id="ocr-latex" spellcheck="false" placeholder="인식된 LaTeX (직접 고칠 수 있어요)"></textarea>
+      <div class="rendered" id="ocr-render"></div>
+      <div class="btns" style="display:flex;gap:6px"><button id="ocr-copy" class="primary">LaTeX 복사</button><button id="ocr-copy-katex">$…$ 로 복사</button></div>
+    </div>
+    <p class="hint full">AI 없이 동작합니다: 이미지를 흑백으로 바꾼 뒤 글자 덩어리를 찾고, KaTeX·Times·Arial 글꼴로 그린 기준 글자와 모양을 비교해 읽은 다음,
+      위치 관계로 분수·루트·위/아래첨자·∑·lim 을 복원합니다. <b>인쇄된(화면에 렌더링된) 수식</b>에 맞춰져 있고, 손글씨나 행렬·여러 줄 수식은 잘 못 읽습니다.
+      초록 상자는 인식한 글자이고, 결과 칸에서 직접 고칠 수 있습니다.</p>
+  </div>
+</div>
+
+<div class="tab" id="tab-say" hidden>
+  <div class="pane">
+    <div class="result-box">
+      <textarea id="say-input" spellcheck="false" placeholder="예) x 제곱 더하기 2x 더하기 1&#10;예) 시그마 k=1부터 n까지 k 제곱&#10;예) (-b + sqrt(b^2 - 4ac)) / 2a"></textarea>
+      <div class="chips" id="say-examples"></div>
+      <p class="hint">한국어로 말하듯 쓰거나(<code>제곱</code>, <code>분의</code>, <code>루트</code>, <code>시그마 …부터 …까지</code>, <code>적분</code>, <code>극한 x가 0으로 갈 때</code>, <code>절댓값</code>, <code>이상/이하</code>, <code>알파·베타·세타</code> …)
+        간단한 텍스트 수식(<code>x^2</code>, <code>a/b</code>, <code>sqrt(x)</code>, <code>sum_(i=1)^n</code>, <code>int_0^1</code>, <code>lim_(x-&gt;0)</code>, <code>&lt;=</code>, <code>pi</code>)으로 쓰면 됩니다. 섞어 써도 됩니다.</p>
+    </div>
+    <div class="result-box">
+      <div class="rendered" id="say-render"></div>
+      <textarea id="say-latex" spellcheck="false" readonly></textarea>
+      <div class="status" id="say-status"></div>
+      <div class="btns" style="display:flex;gap:6px"><button id="say-copy" class="primary">LaTeX 복사</button><button id="say-copy-katex">$…$ 로 복사</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="tab" id="tab-convert">
+<div class="options">
+  <label>구분자
+    <select id="opt-delims">
+      <option value="dollars">$ … $ / $$ … $$</option>
+      <option value="brackets">\( … \) / \[ … \]</option>
+    </select>
+  </label>
+  <label><input type="checkbox" id="opt-expand" checked> 사용자 매크로 펼치기</label>
+  <label><input type="checkbox" id="opt-keepenv"> equation/align 환경 유지</label>
+  <label><input type="checkbox" id="opt-preamble"> 프리앰블 유지</label>
+</div>
+
+<main>
+  <section>
+    <div class="head">LaTeX 입력
+      <div class="btns">
+        <label class="file">파일 열기<input type="file" id="file" accept=".tex,.txt,.md"></label>
+        <button id="sample">예제</button>
+        <button id="clear">지우기</button>
+      </div>
+    </div>
+    <textarea id="input" spellcheck="false" placeholder="여기에 LaTeX를 붙여넣으세요"></textarea>
+  </section>
+  <section>
+    <div class="head">KaTeX 출력
+      <div class="btns">
+        <button id="download">저장</button>
+        <button id="copy" class="primary">복사</button>
+      </div>
+    </div>
+    <textarea id="output" spellcheck="false" readonly></textarea>
+  </section>
+  <div id="messages"></div>
+  <section class="preview">
+    <div class="head">미리보기</div>
+    <div id="preview"></div>
+  </section>
+</main>
+</div>
+
+<script>
+const SAMPLE = String.raw`\newcommand{\R}{\mathbb{R}}
+\newcommand{\norm}[1]{\left\lVert #1 \right\rVert}
+\DeclareMathOperator*{\argmax}{arg\,max}
+
+벡터 $\bm{x} \in \R^n$ 의 노름은 \(\norm{\bm{x}}\) 이다. % 이 주석은 제거됩니다
+속도는 $\SI{3.0}{\meter\per\second}$ 이다.
+
+\begin{align}
+  f(x) &= \int_0^1 g(t)\,dt \label{eq:f} \\
+  \hat\theta &= \argmax_\theta \mbox{ } L(\theta) \nonumber
+\end{align}
+
+\begin{eqnarray*}
+  a &=& b + c \\
+    &\le& \mathbbm{1}
+\end{eqnarray*}
+
+\begin{multline}
+  x = a + b + c \\ + d + e \tag{M}
+\end{multline}
+
+화학식도 됩니다: $\ce{2H2 + O2 -> 2H2O}$`;
+
+const $ = (id) => document.getElementById(id);
+let last = null;
+
+function run() {
+  const opts = {
+    delimiters: $('opt-delims').value,
+    expandMacros: $('opt-expand').checked,
+    keepEnvironments: $('opt-keepenv').checked,
+    keepPreamble: $('opt-preamble').checked,
+  };
+  const msgs = $('messages');
+  msgs.replaceChildren();
+  const add = (cls, text) => { const d = document.createElement('div'); d.className = 'msg ' + cls; d.textContent = text; msgs.append(d); };
+
+  let result;
+  try { result = LatexToKatex.convert($('input').value, opts); }
+  catch (e) { add('err', '변환 실패: ' + e.message); return; }
+  last = result;
+
+  let out = result.output;
+  if (Object.keys(result.macros).length) {
+    add('warn', 'KaTeX의 macros 옵션에 아래 객체를 넣어야 합니다:\n' + JSON.stringify(result.macros, null, 2));
+  }
+  $('output').value = out;
+  for (const w of result.warnings) add('warn', w);
+
+  const errors = LatexToKatex.check(result, katex);
+  for (const e of errors) add('err', `출력 ${e.line}행: ${e.message}`);
+  if (result.math.length && !errors.length) add('ok', `✓ 수식 ${result.math.length}개 모두 KaTeX로 렌더링됩니다.`);
+
+  const pv = $('preview');
+  pv.textContent = opts.keepPreamble ? out.replace(/^[\s\S]*?\\begin\{document\}|\\end\{document\}\s*$/g, '') : out;
+  renderMathInElement(pv, {
+    delimiters: [
+      { left: '$$', right: '$$', display: true },
+      { left: '\\[', right: '\\]', display: true },
+      { left: '$', right: '$', display: false },
+      { left: '\\(', right: '\\)', display: false },
+    ],
+    macros: Object.assign({}, result.macros),
+    throwOnError: false,
+    strict: 'ignore',
+  });
+}
+
+let timer;
+const schedule = () => { clearTimeout(timer); timer = setTimeout(run, 200); };
+
+window.addEventListener('DOMContentLoaded', () => {
+  try { $('input').value = localStorage.getItem('latex2katex-input') ?? SAMPLE; } catch { $('input').value = SAMPLE; }
+  $('input').addEventListener('input', () => {
+    try { localStorage.setItem('latex2katex-input', $('input').value); } catch {}
+    schedule();
+  });
+  for (const id of ['opt-delims', 'opt-expand', 'opt-keepenv', 'opt-preamble']) $(id).addEventListener('change', run);
+  $('sample').onclick = () => { $('input').value = SAMPLE; run(); };
+  $('clear').onclick = () => { $('input').value = ''; run(); };
+  $('file').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (f) { $('input').value = await f.text(); run(); }
+  };
+  $('copy').onclick = async () => {
+    await navigator.clipboard.writeText($('output').value);
+    $('copy').textContent = '복사됨';
+    setTimeout(() => ($('copy').textContent = '복사'), 1200);
+  };
+  $('download').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([$('output').value], { type: 'text/markdown' }));
+    a.download = 'converted.md';
+    a.click();
+  };
+  run();
+  setupTabs();
+  setupImage();
+  setupSay();
+});
+
+// ───────── 탭 ─────────
+function setupTabs() {
+  const tabs = document.querySelectorAll('nav.tabs button');
+  const show = (name) => {
+    for (const t of tabs) t.setAttribute('aria-selected', String(t.dataset.tab === name));
+    for (const el of document.querySelectorAll('.tab')) el.hidden = el.id !== 'tab-' + name;
+    try { localStorage.setItem('latex2katex-tab', name); } catch {}
+  };
+  for (const t of tabs) t.onclick = () => show(t.dataset.tab);
+  let saved = null;
+  try { saved = localStorage.getItem('latex2katex-tab'); } catch {}
+  if (saved && document.getElementById('tab-' + saved)) show(saved);
+}
+
+function renderInto(el, latex) {
+  try {
+    katex.render(latex || '\\text{ }', el, { displayMode: true, throwOnError: true, strict: 'ignore' });
+    return null;
+  } catch (e) {
+    el.textContent = e.message;
+    return e.message;
+  }
+}
+
+async function copyText(btn, text) {
+  await navigator.clipboard.writeText(text);
+  const old = btn.textContent;
+  btn.textContent = '복사됨';
+  setTimeout(() => (btn.textContent = old), 1200);
+}
+
+// ───────── 이미지 → LaTeX ─────────
+function setupImage() {
+  const drop = $('drop'), canvas = $('ocr-canvas'), out = $('ocr-latex'), status = $('ocr-status');
+  const update = () => renderInto($('ocr-render'), out.value);
+  out.addEventListener('input', update);
+  $('ocr-copy').onclick = () => copyText($('ocr-copy'), out.value);
+  $('ocr-copy-katex').onclick = () => copyText($('ocr-copy-katex'), `$${out.value}$`);
+
+  let busy = 0;
+  async function recognize(source) {
+    const ticket = ++busy;
+    status.textContent = '인식 중… (처음에는 기준 글자를 만드느라 조금 걸립니다)';
+    // 원본을 미리보기 캔버스에 그림
+    const w = source.naturalWidth || source.width, h = source.naturalHeight || source.height;
+    const scale = Math.min(1, 640 / w, 360 / h);
+    canvas.width = Math.round(w * scale); canvas.height = Math.round(h * scale);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+    canvas.hidden = false;
+    $('drop-msg').hidden = true;
+    try {
+      const t0 = performance.now();
+      const r = await FormulaOCR.recognize(source);
+      if (ticket !== busy) return;
+      // 인식한 글자 상자 표시
+      ctx.lineWidth = 1.5;
+      ctx.font = '11px sans-serif';
+      for (const s of r.symbols) {
+        ctx.strokeStyle = 'rgba(30,160,80,.85)';
+        ctx.strokeRect(s.x * scale, s.y * scale, s.w * scale, s.h * scale);
+        ctx.fillStyle = 'rgba(30,160,80,.95)';
+        ctx.fillText(s.label, s.x * scale, Math.max(10, s.y * scale - 2));
+      }
+      out.value = r.latex;
+      const err = update();
+      status.textContent = r.latex
+        ? `인식 완료 (${Math.round(performance.now() - t0)}ms, 기호 ${r.symbols.length}개)` + (err ? ' — KaTeX 렌더링 오류가 있어 직접 고쳐 주세요' : '')
+        : (r.warnings[0] || '수식을 찾지 못했습니다.');
+    } catch (e) {
+      status.textContent = '인식 실패: ' + e.message;
+    }
+  }
+
+  async function fromBlob(blob) {
+    if (!blob || !blob.type.startsWith('image/')) { status.textContent = '이미지 파일이 아닙니다.'; return; }
+    const img = new Image();
+    img.src = URL.createObjectURL(blob);
+    try { await img.decode(); } catch { status.textContent = '이미지를 읽지 못했습니다.'; return; }
+    await recognize(img);
+    URL.revokeObjectURL(img.src);
+  }
+
+  $('ocr-file').onchange = (e) => fromBlob(e.target.files[0]);
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); fromBlob(e.dataTransfer.files[0]); });
+  document.addEventListener('paste', (e) => {
+    if ($('tab-image').hidden) return;
+    const item = [...(e.clipboardData?.items || [])].find((i) => i.type.startsWith('image/'));
+    if (item) { e.preventDefault(); fromBlob(item.getAsFile()); }
+  });
+
+  const SAMPLES = [
+    'x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}', '\\sum_{k=1}^{n} k^2 = \\frac{n(n+1)(2n+1)}{6}',
+    '\\int_0^1 x^2 dx = \\frac{1}{3}', '\\lim_{x \\to 0} \\frac{\\sin x}{x} = 1', 'e^{i\\pi} + 1 = 0',
+    'a^2 + b^2 = c^2', 'f(x) = 3x^2 - 5x + 2', '\\sin^2\\theta + \\cos^2\\theta = 1',
+  ];
+  let k = 0;
+  $('ocr-sample').onclick = async () => {
+    status.textContent = '예제 이미지를 만드는 중…';
+    const cv = await LatexImage.render(SAMPLES[k++ % SAMPLES.length], { fontSize: 30 });
+    await recognize(cv);
+  };
+}
+
+// ───────── 말로 → LaTeX ─────────
+function setupSay() {
+  const input = $('say-input'), out = $('say-latex'), status = $('say-status');
+  const EXAMPLES = [
+    'x 제곱 더하기 2x 더하기 1', '2 분의 1 더하기 3 분의 1', '루트 괄호 열고 x 더하기 1 괄호 닫고',
+    '시그마 k=1부터 n까지 k 제곱', '적분 0부터 1까지 x 제곱 dx', '극한 x가 0으로 갈 때 사인 x 나누기 x',
+    '사인 제곱 세타 더하기 코사인 제곱 세타는 1', 'y는 x의 절댓값', 'x는 3 이상', 'x = (-b +- sqrt(b^2-4ac))/(2a)',
+  ];
+  for (const ex of EXAMPLES) {
+    const b = document.createElement('button');
+    b.textContent = ex;
+    b.onclick = () => { input.value = ex; run(); };
+    $('say-examples').append(b);
+  }
+  function run() {
+    const { latex, warnings } = TextToLatex.parse(input.value);
+    out.value = latex;
+    const err = renderInto($('say-render'), latex);
+    status.textContent = [...warnings, err ? 'KaTeX 오류: ' + err : ''].filter(Boolean).join(' / ');
+    try { localStorage.setItem('latex2katex-say', input.value); } catch {}
+  }
+  try { input.value = localStorage.getItem('latex2katex-say') ?? EXAMPLES[3]; } catch { input.value = EXAMPLES[3]; }
+  input.addEventListener('input', run);
+  $('say-copy').onclick = () => copyText($('say-copy'), out.value);
+  $('say-copy-katex').onclick = () => copyText($('say-copy-katex'), `$${out.value}$`);
+  run();
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "name": "latex2katex",
+  "version": "1.0.0",
+  "description": "LaTeX 문서/수식을 KaTeX에서 렌더링 가능한 형태로 변환",
+  "main": "src/latex2katex.js",
+  "scripts": {
+    "test": "node --test",
+    "convert": "node cli.js"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "katex": "^0.16.47"
+  },
+  "bin": {
+    "latex2katex": "cli.js"
+  }
+}
