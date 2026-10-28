@@ -10,6 +10,7 @@
 <script defer src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
 <script defer src="src/latex2katex.js"></script>
 <script defer src="src/text2latex.js"></script>
+<script defer src="src/latex2hwp.js"></script>
 <script defer src="src/ocr.js"></script>
 <script defer src="src/latex-image.js"></script>
 <style>
@@ -91,7 +92,7 @@
 <nav class="tabs" role="tablist">
   <button role="tab" data-tab="convert" aria-selected="true">LaTeX 변환</button>
   <button role="tab" data-tab="image" aria-selected="false">이미지 → LaTeX</button>
-  <button role="tab" data-tab="say" aria-selected="false">말로 → LaTeX</button>
+  <button role="tab" data-tab="say" aria-selected="false">말·한글수식 → LaTeX</button>
 </nav>
 
 <div class="tab" id="tab-image" hidden>
@@ -108,7 +109,7 @@
       <div class="status" id="ocr-status">이미지를 넣으면 인식 결과가 여기에 나옵니다.</div>
       <textarea id="ocr-latex" spellcheck="false" placeholder="인식된 LaTeX (직접 고칠 수 있어요)"></textarea>
       <div class="rendered" id="ocr-render"></div>
-      <div class="btns" style="display:flex;gap:6px"><button id="ocr-copy" class="primary">LaTeX 복사</button><button id="ocr-copy-katex">$…$ 로 복사</button></div>
+      <div class="btns" style="display:flex;gap:6px"><button id="ocr-copy" class="primary">LaTeX 복사</button><button id="ocr-copy-katex">$…$ 로 복사</button><button id="ocr-copy-hwp">한글 수식 복사</button></div>
     </div>
     <section class="learn full">
       <div class="head">교재로 학습시키기</div>
@@ -141,16 +142,21 @@
 <div class="tab" id="tab-say" hidden>
   <div class="pane">
     <div class="result-box">
-      <textarea id="say-input" spellcheck="false" placeholder="예) x 제곱 더하기 2x 더하기 1&#10;예) 시그마 k=1부터 n까지 k 제곱&#10;예) (-b + sqrt(b^2 - 4ac)) / 2a"></textarea>
+      <textarea id="say-input" spellcheck="false" placeholder="예) x 제곱 더하기 2x 더하기 1&#10;예) {a+b} over 2 + sqrt x&#10;예) (-b + sqrt(b^2 - 4ac)) / 2a&#10;(줄을 바꾸면 결과도 다음 줄로)"></textarea>
       <div class="chips" id="say-examples"></div>
       <p class="hint">한국어로 말하듯 쓰거나(<code>제곱</code>, <code>분의</code>, <code>루트</code>, <code>시그마 …부터 …까지</code>, <code>적분</code>, <code>극한 x가 0으로 갈 때</code>, <code>절댓값</code>, <code>이상/이하</code>, <code>알파·베타·세타</code> …)
-        간단한 텍스트 수식(<code>x^2</code>, <code>a/b</code>, <code>sqrt(x)</code>, <code>sum_(i=1)^n</code>, <code>int_0^1</code>, <code>lim_(x-&gt;0)</code>, <code>&lt;=</code>, <code>pi</code>)으로 쓰면 됩니다. 섞어 써도 됩니다.</p>
+        간단한 텍스트 수식(<code>x^2</code>, <code>a/b</code>, <code>sqrt(x)</code>, <code>sum_(i=1)^n</code>, <code>int_0^1</code>, <code>lim_(x-&gt;0)</code>, <code>&lt;=</code>, <code>pi</code>),
+        <b>한글(HWP) 수식</b>(<code>{a+b} over 2</code>, <code>sum from {i=1} to n</code>, <code>LEFT ( x RIGHT )</code>, <code>pmatrix{1 &amp; 0 # 0 &amp; 1}</code>, <code>cases{…}</code>, <code>rm</code>, <code>"글자"</code>, <code>~</code>, <code>#</code>),
+        LaTeX 명령(<code>\frac{a}{b}</code>), 영어 수(<code>ten</code>), 한글 수(<code>이십오</code>) 중 아무거나 섞어 써도 됩니다. 줄을 바꾸면 결과도 다음 줄로 갑니다.</p>
     </div>
     <div class="result-box">
       <div class="rendered" id="say-render"></div>
+      <label class="status">LaTeX</label>
       <textarea id="say-latex" spellcheck="false" readonly></textarea>
+      <label class="status">한글 수식 (한글 프로그램의 수식 편집기에 붙여넣기)</label>
+      <textarea id="say-hwp" spellcheck="false" readonly></textarea>
       <div class="status" id="say-status"></div>
-      <div class="btns" style="display:flex;gap:6px"><button id="say-copy" class="primary">LaTeX 복사</button><button id="say-copy-katex">$…$ 로 복사</button></div>
+      <div class="btns" style="display:flex;gap:6px;flex-wrap:wrap"><button id="say-copy" class="primary">LaTeX 복사</button><button id="say-copy-katex">$…$ 로 복사</button><button id="say-copy-hwp">한글 수식 복사</button></div>
     </div>
   </div>
 </div>
@@ -336,6 +342,7 @@ function setupImage() {
   out.addEventListener('input', update);
   $('ocr-copy').onclick = () => copyText($('ocr-copy'), out.value);
   $('ocr-copy-katex').onclick = () => copyText($('ocr-copy-katex'), `$${out.value}$`);
+  $('ocr-copy-hwp').onclick = () => copyText($('ocr-copy-hwp'), LatexToHwp.convert(out.value));
 
   let busy = 0;
   let current = null; // 학습에 쓸 원본 이미지(캔버스 복사본)
@@ -481,7 +488,9 @@ function setupImage() {
 function setupSay() {
   const input = $('say-input'), out = $('say-latex'), status = $('say-status');
   const EXAMPLES = [
-    'x 제곱 더하기 2x 더하기 1', '2 분의 1 더하기 3 분의 1', '루트 괄호 열고 x 더하기 1 괄호 닫고',
+    'x 제곱 더하기 2x 더하기 1', '2 분의 1 더하기 3 분의 1', '{a+b} over 2 = sqrt {x^2 + 1}',
+    'sum from {k=1} to n k^2 = {n(n+1)(2n+1)} over 6', 'f(x) = cases{x, & x >= 0 # -x, & x < 0}', 'A = pmatrix{1 & 2 # 3 & 4}',
+    'E = mc^2\nF = ma\nrm dx over rm dt = v', '십의 제곱 더하기 오는 105이다', '루트 괄호 열고 x 더하기 1 괄호 닫고',
     '시그마 k=1부터 n까지 k 제곱', '적분 0부터 1까지 x 제곱 dx', '극한 x가 0으로 갈 때 사인 x 나누기 x',
     '사인 제곱 세타 더하기 코사인 제곱 세타는 1', 'y는 x의 절댓값', 'x는 3 이상', 'x = (-b +- sqrt(b^2-4ac))/(2a)',
   ];
@@ -494,6 +503,7 @@ function setupSay() {
   function run() {
     const { latex, warnings } = TextToLatex.parse(input.value);
     out.value = latex;
+    $('say-hwp').value = LatexToHwp.convert(latex);
     const err = renderInto($('say-render'), latex);
     status.textContent = [...warnings, err ? 'KaTeX 오류: ' + err : ''].filter(Boolean).join(' / ');
     try { localStorage.setItem('latex2katex-say', input.value); } catch {}
@@ -502,6 +512,7 @@ function setupSay() {
   input.addEventListener('input', run);
   $('say-copy').onclick = () => copyText($('say-copy'), out.value);
   $('say-copy-katex').onclick = () => copyText($('say-copy-katex'), `$${out.value}$`);
+  $('say-copy-hwp').onclick = () => copyText($('say-copy-hwp'), $('say-hwp').value);
   run();
 }
 </script>
