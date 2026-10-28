@@ -25,6 +25,8 @@
     '−': '-', '×': '\\times', '÷': '\\div', '±': '\\pm', '≤': '\\le', '≥': '\\ge', '≠': '\\neq', '→': '\\to',
     '∞': '\\infty', '∂': '\\partial', '∇': '\\nabla', '∈': '\\in', '≈': '\\approx', '{': '\\{', '}': '\\}',
     '∑': '\\sum', '∏': '\\prod', '∫': '\\int', '∮': '\\oint', '′': "'", '·': '\\cdot',
+    'ℏ': '\\hbar', '⟨': '\\langle', '⟩': '\\rangle', '≡': '\\equiv', '∓': '\\mp', '⇒': '\\Rightarrow',
+    '⟹': '\\implies', '≪': '\\ll', '≫': '\\gg', '∗': '*', 'ˆ': '\\hat', '˜': '\\tilde',
   };
   const toLatex = (ch) => SYM_LATEX[ch] ?? (GREEK[ch] ? '\\' + GREEK[ch] : ch);
 
@@ -41,6 +43,8 @@
     ['+=()[]{}|/<>,.;:!′≤≥≠±×÷→∞∂∇∈≈', 'KaTeX_Main', 'normal', 'sym'],
     [LOWER, 'KaTeX_Main', 'normal', 'roman'],
     ['ΓΔΘΛΞΠΣΦΨΩ', 'KaTeX_Main', 'normal', 'greek'],
+    ['ℏ⟨⟩≡∓⇒⟹≪≫∗', 'KaTeX_Main', 'normal', 'sym'],
+    ['ˆ˜', 'KaTeX_Main', 'normal', 'accent'],
     [LOWER + UPPER, 'KaTeX_Math', 'italic', 'letter'],
     ['αβγδϵεζηθικλμνξπρστυϕφχψω', 'KaTeX_Math', 'italic', 'greek'],
     ['∑∏∫∮', 'KaTeX_Size1', 'normal', 'bigop'],
@@ -52,7 +56,7 @@
     ['0123456789+=()<>,.:!×', SANS, 'normal', 'digit'],
     [LOWER + UPPER, SANS, 'normal', 'letter'],
   ];
-  const STRETCHY = new Set(['(', ')', '[', ']', '\\{', '\\}', '|', '\\int', '\\oint', '/']);
+  const STRETCHY = new Set(['(', ')', '[', ']', '\\{', '\\}', '|', '\\int', '\\oint', '/', '\\langle', '\\rangle']);
 
   let templatesPromise = null;
   function getTemplates() {
@@ -226,7 +230,7 @@
 
   // ───────────────────────── 전처리 ─────────────────────────
 
-  function binarize(imgData) {
+  function toGray(imgData) {
     const { width: W, height: H, data } = imgData;
     const gray = new Uint8Array(W * H);
     const hist = new Uint32Array(256);
@@ -237,26 +241,48 @@
       gray[k] = g;
       hist[g]++;
     }
-    // Otsu
+    // 어두운 배경(다크 모드 스크린샷)이면 반전해서 "밝은 종이 위 어두운 잉크"로 맞춘다
+    let bg = 0;
+    for (let i = 1; i < 256; i++) if (hist[i] > hist[bg]) bg = i;
+    if (bg < 128) {
+      for (let k = 0; k < W * H; k++) gray[k] = 255 - gray[k];
+      hist.reverse();
+      bg = 255 - bg;
+    }
+    let n = 0, sum = 0, sq = 0;
+    for (let i = Math.max(0, bg - 30); i <= Math.min(255, bg + 30); i++) { n += hist[i]; sum += i * hist[i]; sq += i * i * hist[i]; }
+    const sd = n ? Math.sqrt(Math.max(0, sq / n - (sum / n) ** 2)) : 0;
+    let acc = 0, ink = 0;
+    for (; ink < 256; ink++) { acc += hist[ink]; if (acc >= 0.005 * W * H) break; }
+    return { W, H, gray, hist, bg, sd, ink };
+  }
+
+  // level: 'otsu' 또는 종이색에서 얼마나 가까운 곳에서 자를지(작을수록 연한 획까지 잉크로 봄).
+  // Otsu 는 잉크와 종이의 중간에서 자르기 때문에 Computer Modern 같은 글꼴의 가는 획이 끊기고,
+  // 반대로 너무 너그러우면 스캔본의 번진 테두리끼리 붙는다. 그래서 여러 단계를 시도한다.
+  function threshold(g, level) {
+    const o = otsu(g.hist, g.W * g.H);
+    const thr = level === 'otsu' ? o : Math.max(o, Math.min(g.bg - level * (g.bg - g.ink), g.bg - 3 * g.sd - 6));
+    const bin = new Uint8Array(g.W * g.H);
+    for (let k = 0; k < g.W * g.H; k++) if (g.gray[k] <= thr) bin[k] = 1;
+    return { W: g.W, H: g.H, bin };
+  }
+
+  function otsu(hist, total) {
     let sumAll = 0;
     for (let i = 0; i < 256; i++) sumAll += i * hist[i];
     let wB = 0, sumB = 0, best = 0, thr = 128;
     for (let i = 0; i < 256; i++) {
       wB += hist[i];
       if (!wB) continue;
-      const wF = W * H - wB;
+      const wF = total - wB;
       if (!wF) break;
       sumB += i * hist[i];
       const mB = sumB / wB, mF = (sumAll - sumB) / wF;
       const between = wB * wF * (mB - mF) * (mB - mF);
       if (between > best) { best = between; thr = i; }
     }
-    const bin = new Uint8Array(W * H);
-    let dark = 0;
-    for (let k = 0; k < W * H; k++) if (gray[k] <= thr) { bin[k] = 1; dark++; }
-    // 잉크가 더 적은 쪽이라고 가정(어두운 배경의 흰 글씨 지원)
-    if (dark > W * H / 2) for (let k = 0; k < W * H; k++) bin[k] ^= 1;
-    return { W, H, bin };
+    return thr;
   }
 
   function components({ W, H, bin }) {
@@ -383,7 +409,7 @@
   function splitTouching(c, templates, medH, nextId, depth = 0) {
     const score = (p) => (p.score ??= classify(makeShape(p.bits, p.w, p.h), null, templates)[0].s);
     const own = score(c);
-    if (depth > 3 || own < 0.6 || c.w < 0.5 * medH) return [c];
+    if (depth > 3 || own < 0.9 || c.w < 0.5 * medH) return [c];
     const col = new Array(c.w).fill(0);
     for (let y = 0; y < c.h; y++) for (let x = 0; x < c.w; x++) col[x] += c.bits[y * c.w + x];
     const cuts = [];
@@ -398,7 +424,7 @@
       // 각 조각도 더 잘라 본 뒤, 가장 나쁜 조각의 점수로 판단
       const parts = halves.flatMap((p) => splitTouching(p, templates, medH, nextId, depth + 1));
       const worst = Math.max(...parts.map(score));
-      if (worst < 0.8 && worst < 0.7 * own && (!best || worst < best.worst)) best = { worst, parts };
+      if (worst < 0.6 && worst < 0.55 * own && (!best || worst < best.worst)) best = { worst, parts };
     }
     return best ? best.parts : [c];
   }
@@ -473,6 +499,28 @@
         }));
       }
 
+      // 1.5) 악센트(\\hat, \\tilde, \\vec): 글자 바로 위에 붙은 작은 기호
+      for (const s of rest.filter((x) => x.kind === 'char' && (x.cls === 'accent' || (x.latex === '\\to' && x.h < 0.4 * em)))) {
+        if (!rest.includes(s)) continue;
+        const below = rest.filter((t) => t !== s && t.kind !== 'hline' && t.kind !== 'dot' &&
+          xOverlap(s, t) >= 0.5 * s.w && t.y0 >= s.y1 - 0.15 * em && t.y0 - s.y1 < 0.4 * em && s.w < 1.6 * t.w + 0.3 * em)
+          .sort((a, b) => (a.y0 - s.y1) - (b.y0 - s.y1));
+        const t = below[0];
+        if (!t) continue;
+        const cmd = s.latex === '\\to' ? '\\vec' : s.latex;
+        rest = rest.filter((x) => x !== s && x !== t);
+        rest.push(box(Object.assign({}, t, {
+          kind: 'comp', latex: `${cmd}{${t.latex}}`, x0: Math.min(s.x0, t.x0), y0: s.y0, x1: Math.max(s.x1, t.x1), y1: t.y1,
+        })));
+      }
+
+      // 붙을 글자가 없는 악센트 모양은 악센트가 아님 → 다음 후보로
+      for (const s of rest) {
+        if (s.kind !== 'char' || s.cls !== 'accent') continue;
+        const alt = s.cands.find((c) => c.t.cls !== 'accent');
+        if (alt) Object.assign(s, { latex: alt.t.latex, cls: alt.t.cls, tmpl: alt.t });
+      }
+
       // 2) 분수 (가장 넓은 가로줄부터). 분자·분모는 가로줄 범위 안에서 위아래로 이어진 기호들
       const stack = (bar, dir, pool) => {
         const tol = 0.15 * em;
@@ -528,6 +576,10 @@
         rest = rest.filter((d) => !(d.kind === 'dot' && d.cx > s.x0 && d.cx < s.x1 && d.cy > s.y0 - 0.2 * em && d.cy < s.y1));
         chars.splice(chars.indexOf(s), 1);
       }
+      const emAs = (s, ch) => {
+        const t = s.cands.find((c) => c.t.latex === ch).t;
+        return s.h / (t.top + t.bot);
+      };
       const hasLetter = (s, ch) => s.cands.slice(0, 4).some((c) => c.t.latex === ch && c.s <= s.cands[0].s * 1.35 + 0.3);
       for (let i = 0; i < chars.length; i++) {
         // 같은 줄(세로로 겹치는)에 있는 글자만 이어 본다 — lim 아래의 x→0 이 끼어들지 않게
@@ -541,6 +593,8 @@
           const bases = ok ? seq.map((s, k) => baseAs(s, w[k])) : [];
           for (let k = 1; ok && k < seq.length; k++) {
             if (seq[k].x0 - seq[k - 1].x1 > 0.35 * em || Math.abs(bases[k] - bases[0]) > 0.2 * em) ok = false;
+            // 같은 크기의 글자여야 함(ma_x 의 아래첨자 x 를 max 로 읽지 않게)
+            if (Math.abs(Math.log(emAs(seq[k], w[k]) / emAs(seq[0], w[0]))) > 0.25) ok = false;
           }
           if (!ok) continue;
           const word = box({
@@ -654,6 +708,256 @@
     return parseRegion(items);
   }
 
+  // ───────────────────────── 학습(사용자 템플릿) ─────────────────────────
+  //
+  // 사용자가 고친 LaTeX 를 KaTeX 로 그리되 기호마다 다른 색을 칠한다. 그러면 기준 그림의 각 글자가
+  // 어떤 LaTeX 토큰에서 왔는지 색으로 정확히 알 수 있다(인식할 필요가 없음). 그다음 스크린샷의 글자와
+  // 기준 그림의 글자를 상대 위치로 짝지어, 스크린샷 글자 모양을 그 토큰의 새 템플릿으로 저장한다.
+
+  const STORE_KEY = 'formulaocr-learned-v1';
+  let learnedList = null;
+  let persist = true;
+  let profile = null; // 교재 프로필. null 이면 모든 학습 템플릿 사용
+  const PROFILE_KEY = 'formulaocr-profile';
+  try { profile = localStorage.getItem(PROFILE_KEY) || null; } catch { /* 무시 */ }
+
+  function loadLearned() {
+    if (learnedList) return learnedList;
+    learnedList = [];
+    if (!persist) return learnedList;
+    try {
+      const raw = localStorage.getItem(STORE_KEY);
+      if (raw) learnedList = JSON.parse(raw).map(fromJSON);
+    } catch { /* 저장소를 못 쓰면 메모리에만 */ }
+    return learnedList;
+  }
+
+  function saveLearned() {
+    if (!persist) return;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(learnedList.map(toJSON))); } catch { /* 무시 */ }
+  }
+
+  function toJSON(t) {
+    let bin = '';
+    for (let k = 0; k < N * N; k += 8) {
+      let byte = 0;
+      for (let b = 0; b < 8; b++) byte |= t.ink[k + b] << b;
+      bin += String.fromCharCode(byte);
+    }
+    return { l: t.latex, c: t.cls, p: t.parts, a: +t.asp.toFixed(4), t: +t.top.toFixed(3), b: +t.bot.toFixed(3), i: btoa(bin), s: t.source || '' };
+  }
+
+  function fromJSON(o) {
+    const bin = atob(o.i), ink = new Uint8Array(N * N), pts = [];
+    for (let k = 0; k < N * N; k++) if ((bin.charCodeAt(k >> 3) >> (k & 7)) & 1) { ink[k] = 1; pts.push(k); }
+    return {
+      ink, pts, dt: distanceTransform(ink), asp: o.a, latex: o.l, cls: o.c, parts: o.p, top: o.t, bot: o.b,
+      stretchy: STRETCHY.has(o.l), font: 'learned', learned: true, source: o.s,
+    };
+  }
+
+  // 기본 템플릿 + (현재 교재 프로필의) 학습 템플릿.
+  // 다른 교재에서 배운 모양이 섞이면 오히려 헷갈리는 경우가 있어(실측 약 3%p 손해) 프로필별로 나눈다.
+  async function allTemplates() {
+    const mine = loadLearned().filter((t) => !profile || t.source === profile);
+    return (await getTemplates()).concat(mine);
+  }
+
+  const learnedApi = {
+    count: () => loadLearned().length,
+    // 라벨별 개수
+    summary: () => loadLearned().reduce((m, t) => ((m[t.latex] = (m[t.latex] || 0) + 1), m), {}),
+    export: () => JSON.stringify({ version: 1, templates: loadLearned().map(toJSON) }),
+    import(json) {
+      const data = typeof json === 'string' ? JSON.parse(json) : json;
+      const list = (data.templates || data).map(fromJSON);
+      loadLearned().push(...list);
+      saveLearned();
+      return list.length;
+    },
+    // 프로필을 지정하면 그 교재 것만, 아니면 전부 지움
+    clear(name) {
+      learnedList = name ? loadLearned().filter((t) => t.source !== name) : [];
+      saveLearned();
+    },
+    profiles() {
+      const m = {};
+      for (const t of loadLearned()) m[t.source || '기본'] = (m[t.source || '기본'] || 0) + 1;
+      return m;
+    },
+    getProfile: () => profile,
+    setProfile(name) {
+      profile = name || null;
+      try { if (profile) localStorage.setItem(PROFILE_KEY, profile); else localStorage.removeItem(PROFILE_KEY); } catch { /* 무시 */ }
+    },
+    // 테스트용: localStorage 를 쓰지 않고 메모리에서만 학습
+    usePersistence(on) { persist = on; learnedList = null; },
+  };
+
+  // 기호 하나하나를 서로 다른 색으로 감싼 LaTeX 와 색 → 토큰 표를 만든다
+  const ARITY = {
+    '\\frac': 2, '\\dfrac': 2, '\\tfrac': 2, '\\sqrt': 1, '\\overline': 1, '\\underline': 1, '\\boldsymbol': 1,
+    '\\mathrm': 1, '\\mathbf': 1, '\\mathit': 1, '\\mathcal': 1, '\\mathbb': 1, '\\vec': 1, '\\bar': 1, '\\dot': 1,
+  };
+  const ACCENTS = { '\\hat': '\\hat', '\\widehat': '\\hat', '\\tilde': '\\tilde', '\\widetilde': '\\tilde' };
+  const SKIP = new Set(['\\,', '\\;', '\\!', '\\quad', '\\qquad', '\\ ', '\\displaystyle', '\\limits', '\\nolimits']);
+
+  function colorize(latex) {
+    const toks = latex.match(/\\[A-Za-z]+|\\.|\S/g) || [];
+    const entries = [];
+    let p = 0;
+    const color = () => {
+      const k = entries.length;
+      // 어둡고 서로 잘 구분되는 색(밝기가 낮아야 이진화에서 잉크로 잡힌다)
+      const hue = (k * 137.508) % 360, light = 28 + (k % 3) * 6;
+      return { css: hslHex(hue, 85, light), k };
+    };
+    const wrap = (inner, labels) => {
+      const c = color();
+      entries.push({ color: c.css, labels });
+      return `\\textcolor{${c.css}}{${inner}}`;
+    };
+    function arg() {
+      if (toks[p] === '{') { p++; const s = seq('}'); p++; return s; }
+      return seq(null, 1);
+    }
+    function seq(end, max = Infinity) {
+      let out = '', n = 0;
+      while (p < toks.length && toks[p] !== end && n < max) {
+        const t = toks[p++];
+        n++;
+        if (t === '{') { out += '{' + seq('}') + '}'; p++; continue; }
+        if (t === '^' || t === '_') { out += t + '{' + arg() + '}'; continue; }
+        if (SKIP.has(t)) { out += t + ' '; continue; }
+        if (t === '\\left') {
+          const open = toks[p++];
+          const inner = seq('\\right');
+          p++;
+          const close = toks[p++];
+          out += wrap(`\\left${open} ${inner} \\right${close}`, [open, close]);
+          continue;
+        }
+        if (ACCENTS[t]) { out += wrap(`${t}{${arg()}}`, [ACCENTS[t]]); continue; }
+        if (t === '\\sqrt' && toks[p] === '[') { p++; out += '\\sqrt[' + seq(']') + ']'; p++; out += '{' + arg() + '}'; continue; }
+        if (ARITY[t]) { out += t; for (let a = 0; a < ARITY[t]; a++) out += '{' + arg() + '}'; continue; }
+        if (/^\\(text|operatorname|mathrm\*)$/.test(t)) { out += t + '{' + arg() + '}'; continue; }
+        if (/^\\(sin|cos|tan|log|ln|exp|lim|max|min|sec|csc|cot|det)$/.test(t)) { out += t + ' '; continue; }
+        if (t === '&' || t === '\\\\') { out += t; continue; }
+        out += wrap(t.startsWith('\\') ? t + ' ' : t, [t === '*' ? '*' : t]);
+      }
+      return out;
+    }
+    const tex = seq(null);
+    return { tex, entries };
+  }
+
+  function hslHex(h, s, l) {
+    s /= 100; l /= 100;
+    const f = (n) => {
+      const k = (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+      return Math.round(255 * (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))));
+    };
+    return '#' + [f(0), f(8), f(4)].map((v) => v.toString(16).padStart(2, '0')).join('');
+  }
+
+  // 기준 그림의 기호마다 색을 읽어 토큰 라벨을 붙인다
+  function labelByColor(ref, canvas, entries) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    const pal = entries.map((e) => [1, 3, 5].map((i) => parseInt(e.color.slice(i, i + 2), 16)));
+    const byEntry = new Map();
+    for (const g of ref.groups) {
+      const votes = new Map();
+      const step = Math.max(1, Math.floor(Math.min(g.w, g.h) / 12));
+      for (let y = g.y0; y < g.y1; y += step) for (let x = g.x0; x < g.x1; x += step) {
+        const ox = Math.round((x - 8) / ref.scale), oy = Math.round((y - 8) / ref.scale);
+        if (ox < 0 || oy < 0 || ox >= canvas.width || oy >= canvas.height) continue;
+        const k = (oy * canvas.width + ox) * 4;
+        const r = data[k], gg = data[k + 1], b = data[k + 2];
+        if (r + gg + b > 480) continue; // 배경·가장자리
+        let best = -1, bd = Infinity;
+        pal.forEach(([pr, pg, pb], i) => {
+          const d = (pr - r) ** 2 + (pg - gg) ** 2 + (pb - b) ** 2;
+          if (d < bd) { bd = d; best = i; }
+        });
+        if (best >= 0 && bd < 2500) votes.set(best, (votes.get(best) || 0) + 1);
+      }
+      let win = -1, wv = 0;
+      for (const [i, v] of votes) if (v > wv) { wv = v; win = i; }
+      if (win < 0) continue;
+      if (!byEntry.has(win)) byEntry.set(win, []);
+      byEntry.get(win).push(g);
+    }
+    // 한 색에 글자가 하나면 그 토큰, \left( … \right) 처럼 둘이면 왼쪽·오른쪽 순서로
+    for (const [i, gs] of byEntry) {
+      const labels = entries[i].labels;
+      if (gs.length !== labels.length) continue;
+      gs.sort((a, b) => a.cx - b.cx).forEach((g, j) => { g.truth = labels[j]; });
+    }
+  }
+
+  // 위치 순서를 지키면서(동적 계획법) 두 그림의 기호를 짝짓는다
+  function align(A, B) {
+    const norm = (gs) => {
+      const x0 = Math.min(...gs.map((g) => g.x0)), x1 = Math.max(...gs.map((g) => g.x1));
+      const y0 = Math.min(...gs.map((g) => g.y0)), y1 = Math.max(...gs.map((g) => g.y1));
+      const W = x1 - x0 || 1, H = y1 - y0 || 1;
+      return gs.map((g) => ({ g, x: (g.cx - x0) / W, y: (g.cy - y0) / H, h: g.h / H, w: g.w / W })).sort((a, b) => a.x - b.x);
+    };
+    const a = norm(A), b = norm(B);
+    const kindOk = (p, q) => p.g.kind === q.g.kind || (p.g.kind === 'char' && q.g.kind === 'char');
+    const cost = (p, q) => (kindOk(p, q) ? Math.abs(p.x - q.x) + 1.5 * Math.abs(p.y - q.y) + 0.3 * Math.abs(Math.log((p.h + 0.01) / (q.h + 0.01))) : 9);
+    const GAP = 0.25;
+    const n = a.length, m = b.length;
+    const D = Array.from({ length: n + 1 }, () => new Float64Array(m + 1));
+    for (let i = 1; i <= n; i++) D[i][0] = i * GAP;
+    for (let j = 1; j <= m; j++) D[0][j] = j * GAP;
+    for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++) {
+      D[i][j] = Math.min(D[i - 1][j - 1] + cost(a[i - 1], b[j - 1]), D[i - 1][j] + GAP, D[i][j - 1] + GAP);
+    }
+    const pairs = [];
+    for (let i = n, j = m; i > 0 && j > 0;) {
+      const c = cost(a[i - 1], b[j - 1]);
+      if (Math.abs(D[i][j] - (D[i - 1][j - 1] + c)) < 1e-9) {
+        if (c < 0.3) pairs.push([a[i - 1].g, b[j - 1].g]);
+        i--; j--;
+      } else if (Math.abs(D[i][j] - (D[i - 1][j] + GAP)) < 1e-9) i--;
+      else j--;
+    }
+    return pairs.reverse();
+  }
+
+  async function learn(source, latex, { render = typeof LatexImage !== 'undefined' ? LatexImage.render : null, sourceName = profile || '기본' } = {}) {
+    if (!render) throw new Error('LatexImage 가 필요합니다.');
+    const { tex, entries } = colorize(latex);
+    const canvas = await render(tex, { fontSize: 40 });
+    const [mine, ref] = await Promise.all([analyzeImage(source), analyzeImage(canvas)]);
+    labelByColor(ref, canvas, entries);
+    const base = await getTemplates();
+    const list = loadLearned();
+    const pairs = align(mine.groups, ref.groups);
+    const learnedNow = [];
+    for (const [g, r] of pairs) {
+      if (g.kind !== 'char' || !r.truth || !g.shape) continue;
+      const label = r.truth;
+      // 크기 비율이 너무 다르면(붙어 버린 글자 등) 짝이 잘못된 것으로 보고 건너뜀
+      if (Math.abs(Math.log(g.shape.asp / (r.shape ? r.shape.asp : g.shape.asp))) > 0.7) continue;
+      const best = g.cands[0];
+      if (best.t.latex === label && best.s < 0.35) continue; // 이미 잘 읽는 글자
+      if (list.some((t) => t.source === sourceName && t.latex === label && chamfer(t, g.shape) < 0.3)) continue; // 비슷한 것이 이미 있음
+      const proto = base.find((t) => t.latex === label) || r.tmpl || best.t;
+      const t = Object.assign({}, g.shape, {
+        latex: label, cls: proto.cls, parts: g.ids.length, top: proto.top, bot: proto.bot,
+        stretchy: STRETCHY.has(label), font: 'learned', learned: true, source: sourceName,
+      });
+      list.push(t);
+      learnedNow.push({ from: best.t.latex, to: label });
+    }
+    saveLearned();
+    const chars = mine.groups.filter((g) => g.kind === 'char').length;
+    return { added: learnedNow.length, changes: learnedNow, matched: pairs.length, chars, total: list.length };
+  }
+
   // ───────────────────────── 진입점 ─────────────────────────
 
   function rasterize(source, scale) {
@@ -681,23 +985,15 @@
     return ctx.getImageData(0, 0, cv.width, cv.height);
   }
 
-  function analyse(source, scale) {
-    const img = binarize(rasterize(source, scale));
+  function analyse(gray, level) {
+    const img = threshold(gray, level);
     const { label, comps } = components(img);
     const sizable = comps.filter((c) => c.area > 4 && !isHline(c));
     const medH = median(sizable.map((c) => c.h)) || 1;
     return { img, label, comps, medH };
   }
 
-  async function recognize(source) {
-    const templates = await getTemplates();
-    const W0 = source.naturalWidth || source.width, H0 = source.naturalHeight || source.height;
-    // 기호 높이가 대략 48px 이 되도록 크기 조정
-    let scale = Math.min(1, 1600 / Math.max(W0, H0));
-    let a = analyse(source, scale);
-    const want = Math.min(48 / a.medH, 4000 / Math.max(W0, H0) / scale);
-    if (a.medH < 28 || a.medH > 90) { scale *= want; a = analyse(source, scale); }
-
+  function segmentAndClassify(a, templates) {
     const { medH } = a;
     let comps = a.comps.filter((c) => c.area >= 3 && Math.max(c.w, c.h) >= 0.05 * medH);
     let lastId = Math.max(0, ...a.comps.map((c) => c.id));
@@ -710,10 +1006,6 @@
     });
     const byId = new Map(comps.map((c) => [c.id, c]));
     const groups = mergeParts(comps, medH);
-    const warnings = [];
-    if (!groups.length) return { latex: '', symbols: [], warnings: ['이미지에서 글자를 찾지 못했습니다.'] };
-
-    // 기호 분류
     for (const g of groups) {
       const bits = groupBits(g, byId);
       if (g.ids.length === 1 && isHline(g)) { g.kind = 'hline'; continue; }
@@ -721,6 +1013,7 @@
       const rad = radicalInfo(g, bits, groups);
       if (rad) { g.kind = 'radical'; g.vx = rad.vx; continue; }
       const shape = makeShape(bits, g.w, g.h);
+      g.shape = shape;
       g.cands = classify(shape, g.ids.length, templates);
       const best = g.cands[0].t;
       g.kind = 'char';
@@ -728,6 +1021,36 @@
       g.cls = best.cls;
       g.tmpl = best;
     }
+    return groups;
+  }
+
+  const LEVELS = [0.17, 0.28, 'otsu'];
+
+  // 이미지 → 분류·크기 추정까지 마친 기호 묶음. recognize 와 learn 이 함께 쓴다.
+  async function analyzeImage(source) {
+    const templates = await allTemplates();
+    const W0 = source.naturalWidth || source.width, H0 = source.naturalHeight || source.height;
+    // 기호 높이가 대략 48px 이 되도록 크기 조정
+    let scale = Math.min(1, 1600 / Math.max(W0, H0));
+    let gray = toGray(rasterize(source, scale));
+    const first = analyse(gray, 0.28);
+    if (first.medH < 28 || first.medH > 90) {
+      scale *= Math.min(48 / first.medH, 4000 / Math.max(W0, H0) / scale);
+      gray = toGray(rasterize(source, scale));
+    }
+    // 이진화 단계마다 글자를 나눠 분류해 보고, 템플릿과 가장 잘 맞는(면적 가중 평균 거리가 작은) 결과를 고른다
+    let best = null;
+    for (const level of LEVELS) {
+      const a = analyse(gray, level);
+      const groups = segmentAndClassify(a, templates);
+      let wsum = 0, ssum = 0;
+      for (const g of groups) if (g.kind === 'char') { wsum += g.area; ssum += g.area * g.cands[0].s; }
+      const quality = wsum ? ssum / wsum : Infinity;
+      if (!best || quality < best.quality) best = { a, groups, quality, level };
+    }
+    const { a, groups } = best;
+    const { medH } = a;
+    if (!groups.length) return { groups, medEm: medH, scale, templates, bin: a.img };
 
     // 글자 크기(em)와 기준선 추정
     const ems = groups.filter((g) => g.kind === 'char' && g.tmpl.top + g.tmpl.bot >= 0.4 &&
@@ -755,11 +1078,16 @@
       }
     }
 
-    const result = layout(groups, medEm);
-    const latex = result.latex.replace(/\s+/g, ' ').trim();
+    return { groups, medEm, scale, templates, bin: a.img, level: best.level };
+  }
+
+  async function recognize(source) {
+    const { groups, medEm, scale } = await analyzeImage(source);
+    if (!groups.length) return { latex: '', symbols: [], warnings: ['이미지에서 글자를 찾지 못했습니다.'] };
+    const latex = tidy(layout(groups, medEm).latex);
     return {
       latex,
-      warnings,
+      warnings: [],
       _groups: groups,
       symbols: groups.map((g) => ({
         x: (g.x0 - 8) / scale, y: (g.y0 - 8) / scale, w: g.w / scale, h: g.h / scale,
@@ -769,5 +1097,26 @@
     };
   }
 
-  return { recognize, getTemplates };
+  // 점 세 개 → \\cdots / \\ldots, 공백 정리
+  function tidy(latex) {
+    return latex
+      .replace(/(\\cdot\s*){3}/g, '\\cdots ')
+      .replace(/\.\s*\.\s*\./g, '\\ldots ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  // 디버깅용: 인식에 쓰인 흑백 이미지
+  async function debugBinary(source) {
+    const { bin } = await analyzeImage(source);
+    const cv = document.createElement('canvas');
+    cv.width = bin.W; cv.height = bin.H;
+    const ctx = cv.getContext('2d');
+    const im = ctx.createImageData(bin.W, bin.H);
+    for (let k = 0; k < bin.W * bin.H; k++) { const v = bin.bin[k] ? 0 : 255; im.data.set([v, v, v, 255], k * 4); }
+    ctx.putImageData(im, 0, 0);
+    return cv;
+  }
+
+  return { recognize, learn, learned: learnedApi, getTemplates, debugBinary };
 });

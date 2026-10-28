@@ -69,6 +69,10 @@
   .chips button { font-size: 12px; }
   .hint { font-size: 12px; color: var(--muted); line-height: 1.6; }
   .hint code { font-size: 12px; }
+  .learn-body { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .learn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 13px; }
+  .learn-row label:not(.file) { display: inline-flex; gap: 6px; align-items: center; }
+  .learn-row input[list] { font: inherit; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: var(--text); min-width: 160px; }
   #say-input { min-height: 90px; flex: none; border: 1px solid var(--border); border-radius: 8px; font-family: inherit; font-size: 15px; }
   @media (max-width: 760px) {
     nav.tabs { padding: 8px 16px 0; }
@@ -106,6 +110,28 @@
       <div class="rendered" id="ocr-render"></div>
       <div class="btns" style="display:flex;gap:6px"><button id="ocr-copy" class="primary">LaTeX 복사</button><button id="ocr-copy-katex">$…$ 로 복사</button></div>
     </div>
+    <section class="learn full">
+      <div class="head">교재로 학습시키기</div>
+      <div class="learn-body">
+        <p class="hint" style="margin:0">결과가 틀렸으면 위 칸의 LaTeX 를 올바르게 고친 뒤 <b>이 수정으로 학습</b>을 누르세요.
+          고친 LaTeX 를 기호마다 다른 색으로 KaTeX 렌더링해 각 글자가 무엇인지 정확히 알아낸 다음, 스크린샷의 글자 모양을 그 기호의 새 기준 글자로 저장합니다.
+          같은 교재의 다른 수식도 더 잘 읽게 됩니다. 학습 데이터는 이 브라우저에만 저장됩니다.</p>
+        <div class="learn-row">
+          <label>교재
+            <input id="learn-profile" list="learn-profiles" placeholder="예: 그리피스 3판" autocomplete="off">
+            <datalist id="learn-profiles"></datalist>
+          </label>
+          <button id="learn-go" class="primary" disabled>이 수정으로 학습</button>
+          <span class="status" id="learn-status"></span>
+        </div>
+        <div class="learn-row">
+          <span class="status" id="learn-count"></span>
+          <button id="learn-export">내보내기</button>
+          <label class="file">가져오기<input type="file" id="learn-import" accept=".json,application/json"></label>
+          <button id="learn-clear">이 교재 학습 지우기</button>
+        </div>
+      </div>
+    </section>
     <p class="hint full">AI 없이 동작합니다: 이미지를 흑백으로 바꾼 뒤 글자 덩어리를 찾고, KaTeX·Times·Arial 글꼴로 그린 기준 글자와 모양을 비교해 읽은 다음,
       위치 관계로 분수·루트·위/아래첨자·∑·lim 을 복원합니다. <b>인쇄된(화면에 렌더링된) 수식</b>에 맞춰져 있고, 손글씨나 행렬·여러 줄 수식은 잘 못 읽습니다.
       초록 상자는 인식한 글자이고, 결과 칸에서 직접 고칠 수 있습니다.</p>
@@ -312,11 +338,17 @@ function setupImage() {
   $('ocr-copy-katex').onclick = () => copyText($('ocr-copy-katex'), `$${out.value}$`);
 
   let busy = 0;
+  let current = null; // 학습에 쓸 원본 이미지(캔버스 복사본)
   async function recognize(source) {
     const ticket = ++busy;
     status.textContent = '인식 중… (처음에는 기준 글자를 만드느라 조금 걸립니다)';
     // 원본을 미리보기 캔버스에 그림
     const w = source.naturalWidth || source.width, h = source.naturalHeight || source.height;
+    current = document.createElement('canvas');
+    current.width = w; current.height = h;
+    current.getContext('2d').drawImage(source, 0, 0);
+    $('learn-go').disabled = false;
+    $('learn-status').textContent = '';
     const scale = Math.min(1, 640 / w, 360 / h);
     canvas.width = Math.round(w * scale); canvas.height = Math.round(h * scale);
     const ctx = canvas.getContext('2d');
@@ -351,11 +383,73 @@ function setupImage() {
   async function fromBlob(blob) {
     if (!blob || !blob.type.startsWith('image/')) { status.textContent = '이미지 파일이 아닙니다.'; return; }
     const img = new Image();
+    // img.decode() 는 백그라운드 탭에서 멈출 수 있어 onload 를 쓴다
+    const loaded = new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
     img.src = URL.createObjectURL(blob);
-    try { await img.decode(); } catch { status.textContent = '이미지를 읽지 못했습니다.'; return; }
+    try { await loaded; } catch { status.textContent = '이미지를 읽지 못했습니다.'; return; }
     await recognize(img);
     URL.revokeObjectURL(img.src);
   }
+
+  // ── 교재 학습 ──
+  const profileInput = $('learn-profile'), learnStatus = $('learn-status');
+  profileInput.value = FormulaOCR.learned.getProfile() || '';
+  function refreshLearnInfo() {
+    const profiles = FormulaOCR.learned.profiles();
+    $('learn-profiles').replaceChildren(...Object.keys(profiles).map((p) => Object.assign(document.createElement('option'), { value: p })));
+    const name = profileInput.value.trim();
+    const total = FormulaOCR.learned.count();
+    $('learn-count').textContent = name
+      ? `'${name}'에서 배운 글자 ${profiles[name] || 0}개 · 전체 ${total}개`
+      : `배운 글자 전체 ${total}개 (교재를 비워 두면 모든 교재의 학습을 함께 씁니다)`;
+    $('learn-clear').textContent = name ? '이 교재 학습 지우기' : '학습 전부 지우기';
+  }
+  profileInput.addEventListener('change', () => {
+    FormulaOCR.learned.setProfile(profileInput.value.trim());
+    refreshLearnInfo();
+  });
+  profileInput.addEventListener('input', refreshLearnInfo);
+  $('learn-go').onclick = async () => {
+    if (!current || !out.value.trim()) return;
+    const name = profileInput.value.trim() || '기본';
+    profileInput.value = name;
+    FormulaOCR.learned.setProfile(name);
+    learnStatus.textContent = '학습 중…';
+    $('learn-go').disabled = true;
+    try {
+      const r = await FormulaOCR.learn(current, out.value, { sourceName: name });
+      learnStatus.textContent = r.added
+        ? `글자 ${r.added}개를 새로 배웠습니다: ${r.changes.map((c) => c.to).join(' ')}`
+        : `새로 배울 글자가 없었습니다 (이미 잘 읽거나, 기호 ${r.chars}개 중 ${r.matched}개만 짝을 찾음)`;
+    } catch (e) {
+      learnStatus.textContent = '학습 실패: ' + e.message;
+    }
+    $('learn-go').disabled = false;
+    refreshLearnInfo();
+  };
+  $('learn-export').onclick = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([FormulaOCR.learned.export()], { type: 'application/json' }));
+    a.download = 'formula-ocr-learned.json';
+    a.click();
+  };
+  $('learn-import').onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try { learnStatus.textContent = `${FormulaOCR.learned.import(await f.text())}개를 가져왔습니다.`; }
+    catch (err) { learnStatus.textContent = '가져오기 실패: ' + err.message; }
+    e.target.value = '';
+    refreshLearnInfo();
+  };
+  $('learn-clear').onclick = () => {
+    const name = profileInput.value.trim();
+    const n = name ? (FormulaOCR.learned.profiles()[name] || 0) : FormulaOCR.learned.count();
+    if (!n) return;
+    if (!confirm(name ? `'${name}'에서 배운 글자 ${n}개를 지울까요?` : `배운 글자 ${n}개를 모두 지울까요?`)) return;
+    FormulaOCR.learned.clear(name || undefined);
+    refreshLearnInfo();
+  };
+  refreshLearnInfo();
 
   $('ocr-file').onchange = (e) => fromBlob(e.target.files[0]);
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });

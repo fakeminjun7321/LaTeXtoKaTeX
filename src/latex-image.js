@@ -55,8 +55,10 @@
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><foreignObject width="100%" height="100%">` +
       `<div xmlns="http://www.w3.org/1999/xhtml"><style>${css.replace(/</g, '\\3c ')}</style>${xhtml.replace(/^<div /, '<div ')}</div></foreignObject></svg>`;
     const img = new Image();
+    // img.decode() 는 백그라운드 탭에서 멈출 수 있어 onload 를 쓴다
+    const loaded = new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('수식 그림을 만들지 못했습니다.')); });
     img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-    await img.decode();
+    await loaded;
     const cv = document.createElement('canvas');
     cv.width = w; cv.height = h;
     const ctx = cv.getContext('2d');

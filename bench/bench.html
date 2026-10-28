@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>교재 수식 인식 벤치마크</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+<script src="../src/ocr.js"></script>
+<script src="../src/latex-image.js"></script>
+<style>
+  body { font: 13px/1.4 -apple-system, sans-serif; margin: 16px; background: #fff; color: #111; }
+  td { border-bottom: 1px solid #ddd; padding: 4px 8px; vertical-align: middle; }
+  img { max-height: 48px; max-width: 420px; }
+  .ok { color: #1e7a3c; } .bad { color: #b3261e; }
+</style>
+</head>
+<body>
+<p>교재 스크린샷(<code>bench/local/</code>, git 제외)과 정답(<code>bench/local/truth.json</code>)으로 인식률을 잽니다.
+  <code>?mode=baseline</code> 은 그대로, <code>?mode=cv</code> 는 책마다 절반으로 학습하고 나머지 절반으로 시험(2-fold 교차 검증).</p>
+<p id="summary">실행 중…</p>
+<table id="t"></table>
+<script>
+// 비교용 토큰: 공백·중괄호·\left/\right·간격 명령을 무시하고 같은 뜻의 명령은 하나로
+const SYN = { '\\ne': '\\neq', '\\leq': '\\le', '\\geq': '\\ge', '\\rightarrow': '\\to', '\\Longrightarrow': '\\implies',
+  '\\lvert': '|', '\\rvert': '|', '\\vert': '|', '\\widehat': '\\hat', '\\dfrac': '\\frac', '\\ldots': '\\cdots', '\\epsilon': '\\varepsilon' };
+function tokens(s) {
+  s = s.replace(/\\(left|right|quad|qquad|displaystyle)(?![A-Za-z])|\\[,;! ]/g, ' ');
+  return (s.match(/\\[A-Za-z]+|\\.|[^\s{}]/g) || []).map((t) => SYN[t] || t);
+}
+function editDistance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) {
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  }
+  return d[a.length][b.length];
+}
+function score(got, truth) {
+  const a = tokens(got), b = tokens(truth);
+  const dist = editDistance(a, b);
+  return { exact: dist === 0, acc: Math.max(0, 1 - dist / b.length) };
+}
+const loadImage = (src) => new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
+
+(async () => {
+  const mode = new URLSearchParams(location.search).get('mode') || 'baseline';
+  if (mode === 'none') { document.getElementById('summary').textContent = '실행 안 함 (디버깅용)'; window.done = true; return; }
+  const truth = await (await fetch('local/truth.json')).json();
+  const items = [];
+  for (const [book, map] of Object.entries(truth)) {
+    Object.entries(map).forEach(([file, tex], i) => items.push({ book, file, tex, fold: i % 2 }));
+  }
+  for (const it of items) it.img = await loadImage(`local/${it.book}/${it.file}`);
+
+  FormulaOCR.learned.usePersistence(false); // 실험은 메모리에서만
+  const results = [];
+  // pool=book 이면 책마다 따로 학습(다른 책에서 배운 모양이 섞이지 않을 때의 성능)
+  const perBook = new URLSearchParams(location.search).get('pool') === 'book';
+  const folds = mode === 'cv' ? [0, 1] : [null];
+  let learnedTotal = 0;
+  const groupsOf = perBook ? [...new Set(items.map((x) => x.book))].map((b) => items.filter((x) => x.book === b)) : [items];
+  for (const pool of groupsOf) for (const fold of folds) {
+    FormulaOCR.learned.clear();
+    FormulaOCR.learned.setProfile(null);
+    if (fold !== null) {
+      for (const it of pool.filter((x) => x.fold === fold)) {
+        const r = await FormulaOCR.learn(it.img, it.tex, { sourceName: it.book });
+        learnedTotal += r.added;
+      }
+    }
+    for (const it of pool.filter((x) => fold === null || x.fold !== fold)) {
+      const r = await FormulaOCR.recognize(it.img);
+      results.push({ ...it, got: r.latex, ...score(r.latex, it.tex) });
+    }
+  }
+
+  const tbody = document.getElementById('t');
+  for (const r of results) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${r.book}</td><td></td><td><code></code><br><code style="color:#666"></code></td><td class="${r.exact ? 'ok' : 'bad'}">${(r.acc * 100).toFixed(0)}%</td>`;
+    tr.children[1].append(r.img.cloneNode());
+    tr.children[2].children[0].textContent = r.got;
+    tr.children[2].children[2].textContent = r.tex;
+    tbody.append(tr);
+  }
+  const by = {};
+  for (const r of results) {
+    const b = (by[r.book] ||= { n: 0, exact: 0, acc: 0 });
+    b.n++; b.exact += r.exact; b.acc += r.acc;
+  }
+  const all = results.reduce((m, r) => ({ n: m.n + 1, exact: m.exact + r.exact, acc: m.acc + r.acc }), { n: 0, exact: 0, acc: 0 });
+  const line = (name, b) => `${name}: 정확히 일치 ${b.exact}/${b.n}, 토큰 정확도 ${(100 * b.acc / b.n).toFixed(1)}%`;
+  window.summary = [`[${mode}${perBook ? ', 책별 학습' : ''}]` + (mode === 'cv' ? ` 학습된 템플릿 ${learnedTotal}개(두 fold 합)` : ''), line('전체', all),
+    ...Object.entries(by).map(([k, b]) => line(k, b))].join('\n');
+  window.results = results.map(({ img, ...r }) => r);
+  document.getElementById('summary').innerText = window.summary;
+  window.done = true;
+})().catch((e) => { document.getElementById('summary').textContent = '오류: ' + (e.stack || e); window.done = true; });
+</script>
+</body>
+</html>
