@@ -38,7 +38,7 @@
     '절댓값': ['ABS'], '절대값': ['ABS'], '프라임': ['PRIME'], '팩토리얼': ['OP', '!'],
     '무한대': ['ATOM', '\\infty'], '무한': ['ATOM', '\\infty'],
     '바': ['BAR'], '햇': ['HAT'], '벡터': ['VEC'], '도': ['DEG'], '퍼센트': ['ATOM', '\\%'],
-    '의': ['OF'], '는': ['REL', '='], '은': ['REL', '='], '이퀄': ['REL', '='],
+    '이다': ['NOP'], '입니다': ['NOP'], '의': ['OF'], '는': ['REL', '='], '은': ['REL', '='], '이퀄': ['REL', '='],
     '보다': ['THAN'], '크거나': ['REL', '\\ge'], '작거나': ['REL', '\\le'], '크다': ['REL', '>'], '작다': ['REL', '<'],
     '같지': ['REL', '\\neq'], '다르다': ['REL', '\\neq'],
     '이상': ['POSTREL', '\\ge'], '이하': ['POSTREL', '\\le'], '초과': ['POSTREL', '>'], '미만': ['POSTREL', '<'],
@@ -56,6 +56,18 @@
     '케이': ['VAR', 'k'], '아이': ['VAR', 'i'], '제이': ['VAR', 'j'], '티': ['VAR', 't'], '에스': ['VAR', 's'],
     '브이': ['VAR', 'v'], '유': ['VAR', 'u'], '알': ['VAR', 'r'], '피엑스': ['VAR', 'p'],
   };
+  const KO_DIGITS = { '영': 0, '공': 0, '일': 1, '이': 2, '삼': 3, '사': 4, '오': 5, '육': 6, '륙': 6, '칠': 7, '팔': 8, '구': 9 };
+  const KO_UNITS = { '십': 10, '백': 100, '천': 1000 };
+  // 이십오 → 25, 백삼 → 103, 삼만 → 30000
+  function koNumber(s) {
+    let total = 0, section = 0, cur = 0;
+    for (const ch of s) {
+      if (ch in KO_DIGITS) cur = KO_DIGITS[ch];
+      else if (ch in KO_UNITS) { section += (cur || 1) * KO_UNITS[ch]; cur = 0; }
+      else if (ch === '만') { total += (section + cur || 1) * 10000; section = cur = 0; }
+    }
+    return total + section + cur;
+  }
   const KO_KEYS = Object.keys(KO).sort((a, b) => b.length - a.length);
 
   const SYMBOLS = [
@@ -111,9 +123,20 @@
         const run = /^[가-힣]+/.exec(input.slice(i))[0];
         i += run.length;
         let k = 0;
+        const spaced = space;
         while (k < run.length) {
           const key = KO_KEYS.find((x) => run.startsWith(x, k));
-          if (key) { push(KO[key][0], KO[key][1]); k += key.length; }
+          // 한글 숫자(십, 이십오, 백 …). 앞 글자에 붙은 '이'·'일'(0이다, 0일 때)은 조사로 보고,
+          // '이상'·'사인'처럼 사전 단어가 더 길면 사전 단어를 쓴다.
+          const num = /^[영공일이삼사오육륙칠팔구십백천만]+/.exec(run.slice(k));
+          const attached = k === 0 && !spaced && toks.length > 0;
+          const when = num && num[0] === '일' && /^\s*때/.test(input.slice(i - run.length + k + 1));
+          if (num && !attached && !when && (!key || num[0].length > key.length)) {
+            push('NUM', String(koNumber(num[0])));
+            k += num[0].length;
+            continue;
+          }
+          if (key) { if (KO[key][0] !== 'NOP') push(KO[key][0], KO[key][1]); k += key.length; }
           else k++; // 조사 등은 무시
         }
         continue;

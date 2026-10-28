@@ -398,10 +398,10 @@ function setupImage() {
     const profiles = FormulaOCR.learned.profiles();
     $('learn-profiles').replaceChildren(...Object.keys(profiles).map((p) => Object.assign(document.createElement('option'), { value: p })));
     const name = profileInput.value.trim();
-    const total = FormulaOCR.learned.count();
+    const total = FormulaOCR.learned.count() + FormulaOCR.learned.builtinCount();
     $('learn-count').textContent = name
       ? `'${name}'에서 배운 글자 ${profiles[name] || 0}개 · 전체 ${total}개`
-      : `배운 글자 전체 ${total}개 (교재를 비워 두면 모든 교재의 학습을 함께 씁니다)`;
+      : `배운 글자 전체 ${total}개, 내장 ${FormulaOCR.learned.builtinCount()}개 포함 (교재를 비워 두면 모든 교재의 학습을 함께 씁니다)`;
     $('learn-clear').textContent = name ? '이 교재 학습 지우기' : '학습 전부 지우기';
   }
   profileInput.addEventListener('change', () => {
@@ -443,13 +443,16 @@ function setupImage() {
   };
   $('learn-clear').onclick = () => {
     const name = profileInput.value.trim();
-    const n = name ? (FormulaOCR.learned.profiles()[name] || 0) : FormulaOCR.learned.count();
-    if (!n) return;
+    // 사이트에 내장된 학습은 지우지 않음
+    const n = name ? (FormulaOCR.learned.profiles(false)[name] || 0) : FormulaOCR.learned.count();
+    if (!n) { learnStatus.textContent = '지울 학습 데이터가 없습니다 (내장 데이터는 지워지지 않습니다).'; return; }
     if (!confirm(name ? `'${name}'에서 배운 글자 ${n}개를 지울까요?` : `배운 글자 ${n}개를 모두 지울까요?`)) return;
     FormulaOCR.learned.clear(name || undefined);
     refreshLearnInfo();
   };
   refreshLearnInfo();
+  // 교재(그리피스·Townsend·Morin)에서 미리 배운 글자 모양
+  FormulaOCR.learned.loadPack('data/learned-textbooks.json').then(refreshLearnInfo).catch(() => {});
 
   $('ocr-file').onchange = (e) => fromBlob(e.target.files[0]);
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });

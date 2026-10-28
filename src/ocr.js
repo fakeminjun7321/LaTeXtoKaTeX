@@ -716,6 +716,7 @@
 
   const STORE_KEY = 'formulaocr-learned-v1';
   let learnedList = null;
+  let builtinList = []; // 사이트에 함께 올라간 학습 묶음(data/*.json). 저장·삭제 대상이 아님
   let persist = true;
   let profile = null; // 교재 프로필. null 이면 모든 학습 템플릿 사용
   const PROFILE_KEY = 'formulaocr-profile';
@@ -759,7 +760,7 @@
   // 기본 템플릿 + (현재 교재 프로필의) 학습 템플릿.
   // 다른 교재에서 배운 모양이 섞이면 오히려 헷갈리는 경우가 있어(실측 약 3%p 손해) 프로필별로 나눈다.
   async function allTemplates() {
-    const mine = loadLearned().filter((t) => !profile || t.source === profile);
+    const mine = loadLearned().concat(builtinList).filter((t) => !profile || t.source === profile);
     return (await getTemplates()).concat(mine);
   }
 
@@ -780,10 +781,18 @@
       learnedList = name ? loadLearned().filter((t) => t.source !== name) : [];
       saveLearned();
     },
-    profiles() {
+    // 교재별 개수. includeBuiltin 이 false 면 사용자가 직접 가르친 것만
+    profiles(includeBuiltin = true) {
       const m = {};
-      for (const t of loadLearned()) m[t.source || '기본'] = (m[t.source || '기본'] || 0) + 1;
+      for (const t of includeBuiltin ? loadLearned().concat(builtinList) : loadLearned()) m[t.source || '기본'] = (m[t.source || '기본'] || 0) + 1;
       return m;
+    },
+    builtinCount: () => builtinList.length,
+    // 내장 학습 묶음을 불러온다(내보내기 형식과 같음)
+    async loadPack(url) {
+      const data = await (await fetch(url)).json();
+      builtinList = builtinList.concat((data.templates || data).map((o) => Object.assign(fromJSON(o), { builtin: true })));
+      return builtinList.length;
     },
     getProfile: () => profile,
     setProfile(name) {
